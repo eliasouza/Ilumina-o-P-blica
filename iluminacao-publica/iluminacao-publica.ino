@@ -29,7 +29,7 @@
 #include <ArduinoJson.h>
 
 //************************************************************************************************************************
-//Configuracao do acesso ao roteador (sua rede sem fio):
+//Configuracao do acesso a rede Mesh:
 //************************************************************************************************************************
 #define MESH_SSID "TCC" // Nome da sua rede Mesh;
 #define MESH_PASSWORD "tcc123" // Senha da sua rede Mesh;
