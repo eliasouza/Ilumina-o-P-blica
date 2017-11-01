@@ -14,10 +14,10 @@
 //************************************************************************************************************************
 // 1. Le sensor de corrente sct;
 // 2. Le sensor de luminosidade ldr;
-// 3. Le horario;
+// 3. Le horario com RTC DS1302;
 // 4. Envia mensagem broadcast;
 // 5. Recebe mensagem broadcast callback;
-// 6. Envia SMS.
+// 6. Envia SMS com A6.
 //************************************************************************************************************************
 
 //************************************************************************************************************************
@@ -27,9 +27,10 @@
 #include <SPI.h>
 #include <painlessMesh.h>
 #include <ArduinoJson.h>
+#include <virtuabotixRTC.h>
 
 //************************************************************************************************************************
-//Configuracao do acesso a rede Mesh:
+// Configuracao do acesso a rede Mesh:
 //************************************************************************************************************************
 #define MESH_SSID "TCC" // Nome da sua rede Mesh;
 #define MESH_PASSWORD "tcc123" // Senha da sua rede Mesh;
@@ -50,7 +51,16 @@ double resistorCarga = 22; // Carga do resistor;
 #define PINO_MUX A0 // Pino responsavel por ler a entrada analogica selecionada pelo seletor;
 int ldrValor = 0; // Valor lido do LDR;
 double Irms = 0; // Valor lido do leitor corrente;
-char telefone[] = "xxxxxxxx"; // Coloque aqui o numero de telefone que recebera a mensagem SMS.
+char telefone[] = "999058910"; // Coloque aqui o numero de telefone que recebera a mensagem SMS.
+#define CLARO 500 // Ate que grau de luminosidade e considerado claro;
+
+// RTC DS1302:
+virtuabotixRTC RTC(D5, D6, D7); // Pinos ligados ao modulo. Parametros: RTC(clock, data, rst)
+
+//************************************************************************************************************************
+// Configuracao de debug:
+//************************************************************************************************************************
+#define DEV true // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
 
 //************************************************************************************************************************
 // Configuracao do programa:
@@ -69,24 +79,27 @@ void setup() {
 
     // Calibracao do pino
     emon1.current(PINO_MUX, (numVoltasBobina / resistorCarga));
+    
+    // Configuraçes iniciais de data e hora - Apos configurar, comentar a linha abaixo;
+    // RTC.setDS1302Time(00, 11, 15, 4, 1, 11, 2017); // Formato: (segundos, minutos, hora, dia da semana, dia do mes, mes, ano);
 }
 
 //************************************************************************************************************************
 // Execucao do programa:
 //************************************************************************************************************************
 void loop() {
-
+  
     // Atualizar informacoes da rede mesh:
     mesh.update();
 
-    // Ler corrente:
+    // Corrente:
     readAmperage();
 
-    // Ler luminosidade:
+    // Luminosidade:
     readLuminosity();
     
-    // Gastando energia de dia - envia sms
-    if(Irms > 0.30 && ldrValor <= 500){sendSMS();}
+    // Horario
+    readTime();
 }
 
 //************************************************************************************************************************
@@ -96,13 +109,67 @@ void changeSensor(int state) {// Mudar a entrada do mux conforme o seletor
   digitalWrite(SELETOR, state);
 }
 
+void readTime(){ // Lendo horario
+  RTC.updateTime(); // Le as informacoes do circuito;
+  
+  if(DEV){
+    // Imprime as informacoes no serial monitor:
+    Serial.print("Data: ");
+    Serial.print(RTC.dayofmonth);
+    Serial.print("/");
+    Serial.print(RTC.month);
+    Serial.print("/");
+    Serial.print(RTC.year);
+  }
+  
+  // Nao esta de noite:
+  if ( !(RTC.hours >= 19 || RTC.hours < 7) ){// Nao esta entre 7h da noite e 6h da manha.
+      
+      // Gastando energia de dia? - envia sms
+      if(Irms > 0.30 && ldrValor <= CLARO){sendSMS();} 
+       // TODO: Implementar Sleep para que so envie mensagem apos 30 min de ter enviado a primeira mensagem sobre lampada acesa de dia.
+     
+      if(DEV){
+        // Imprime as informacoes no serial monitor:
+        Serial.print("\nDIA.");
+        Serial.print(" Hora: ");
+        Serial.print(RTC.hours);
+        Serial.print(":");
+        Serial.print(RTC.minutes);
+        Serial.print(":");
+        Serial.println(RTC.seconds);
+      }
+  }
+  
+  // Nao esta de dia - Lampada apagada de noite?
+  else{
+  
+    // Lampada queimada? - Envia SMS
+    if(Irms < 0.30 && ldrValor > CLARO){sendSMS();}
+    // TODO: Implementar Sleep para que so envie mensagem apos 30 min de ter enviado a primeira mensagem sobre lampada apagada a noite.
+  
+    if(DEV){
+      Serial.print("\nNOITE.");
+      Serial.print(" Hora: ");
+      Serial.print(RTC.hours);
+      Serial.print(":");
+      Serial.print(RTC.minutes);
+      Serial.print(":");
+      Serial.println(RTC.seconds);
+    }
+  }
+}
+
 void readAmperage(){ // Lendo corrente
   changeSensor(HIGH); // Seleciona no mux o leitor de corrente;
   Irms = emon1.calcIrms(1480); //Calcula a corrente
 
-  // Mostra o valor da corrente no serial monitor:
-  Serial.print("\nCorrente: ");
-  Serial.println(Irms);
+  if(DEV){
+    // Mostra o valor da corrente no serial monitor:
+    Serial.print("Corrente: ");
+    Serial.println(Irms);
+  }
+  
   delay(1);
 }
 
@@ -110,12 +177,21 @@ void readLuminosity(){ // Lendo luminosidade
    changeSensor(LOW);// Seleciona o leitor de luminosidade;
    ldrValor = analogRead(PINO_MUX); // O valor lido será entre 0 e 1023
 
-   if(ldrValor >= 500){digitalWrite(PINO_LED, HIGH);}
-   else{digitalWrite(PINO_LED, LOW);}
+   if(ldrValor >= CLARO){
+     digitalWrite(PINO_LED, HIGH);
+     if(DEV){Serial.println("ESCURO.");}
+   }
+   else{
+     digitalWrite(PINO_LED, LOW);
+     if(DEV) {Serial.println("CLARO.");}
+   }
 
-   // Imprime o valor lido do LDR no monitor serial:
-   Serial.print("\nLuminosidade: ");
-   Serial.println(ldrValor);
+   if(DEV){
+     // Imprime o valor lido do LDR no monitor serial:
+     Serial.print("\nLuminosidade: ");
+     Serial.println(ldrValor);
+   }
+   
    delay(1);
 }
 
