@@ -24,16 +24,17 @@
 // Incluir as bibliotecas:
 //************************************************************************************************************************
 #include "EmonLib.h"
+#include "painlessMesh.h"
 #include <SPI.h>
-#include <painlessMesh.h>
+//#include <painlessMesh.h>
 #include <ArduinoJson.h>
 #include <virtuabotixRTC.h>
 
 //************************************************************************************************************************
 // Configuracao do acesso a rede Mesh:
 //************************************************************************************************************************
-#define MESH_SSID "TCC" // Nome da sua rede Mesh;
-#define MESH_PASSWORD "tcc123" // Senha da sua rede Mesh;
+#define MESH_SSID "SIMPIP" // Nome da sua rede Mesh;
+#define MESH_PASSWORD "simpip" // Senha da sua rede Mesh;
 #define MESH_PORT 5555 // Porta de comunicacao da rede Mesh.
 
 //************************************************************************************************************************
@@ -41,6 +42,9 @@
 //************************************************************************************************************************
 // MESH:
 painlessMesh mesh; // Instancia o objeto mesh;
+SimpleList<String> expected;
+SimpleList<String> received;
+bool sendingDone = false;
 
 // SCT E LDR:
 EnergyMonitor emon1; // Monitor de energia para o sensor de corrente;
@@ -50,12 +54,15 @@ double resistorCarga = 22; // Carga do resistor;
 #define PINO_LED D4 // Pino responsavel por ligar o LED;
 #define PINO_MUX A0 // Pino responsavel por ler a entrada analogica selecionada pelo seletor;
 int ldrValor = 0; // Valor lido do LDR;
-double Irms = 0; // Valor lido do leitor corrente;
-char telefone[] = "999058910"; // Coloque aqui o numero de telefone que recebera a mensagem SMS.
-#define CLARO 500 // Ate que grau de luminosidade e considerado claro;
+double Irms = 0.00; // Valor lido do leitor corrente;
+char telefone[] = "999058910"; // 988338506 Coloque aqui o numero de telefone que recebera a mensagem SMS.
+#define CLARO 700 // Cosiderado claro ate 700 de luminosidade;
+#define CORRENTE 0.25
+int estabilizador = 0;
 
 // RTC DS1302:
 virtuabotixRTC RTC(D5, D6, D7); // Pinos ligados ao modulo. Parametros: RTC(clock, data, rst)
+int ultimoEnvio = -1;
 
 //************************************************************************************************************************
 // Configuracao de debug:
@@ -75,11 +82,12 @@ void setup() {
 
     // Inicializacao da rede mesh:
     mesh.init(MESH_SSID, MESH_PASSWORD, MESH_PORT); // Configura a rede mesh com os dados da rede sem fio;
+    mesh.onNewConnection(&newConnectionCallback);
     mesh.onReceive(&receivedCallback); // Chamada da funcao ao receber uma mensagem;
 
     // Calibracao do pino
     emon1.current(PINO_MUX, (numVoltasBobina / resistorCarga));
-    
+
     // Configuraçes iniciais de data e hora - Apos configurar, comentar a linha abaixo;
     // RTC.setDS1302Time(00, 11, 15, 4, 1, 11, 2017); // Formato: (segundos, minutos, hora, dia da semana, dia do mes, mes, ano);
 }
@@ -88,7 +96,7 @@ void setup() {
 // Execucao do programa:
 //************************************************************************************************************************
 void loop() {
-  
+
     // Atualizar informacoes da rede mesh:
     mesh.update();
 
@@ -98,9 +106,9 @@ void loop() {
     // Luminosidade:
     readLuminosity();
     
-    // Horario
+    // Horario:
     readTime();
-}
+ }
 
 //************************************************************************************************************************
 // Funcoes pessoais:
@@ -111,7 +119,7 @@ void changeSensor(int state) {// Mudar a entrada do mux conforme o seletor
 
 void readTime(){ // Lendo horario
   RTC.updateTime(); // Le as informacoes do circuito;
-  
+
   if(DEV){
     // Imprime as informacoes no serial monitor:
     Serial.print("Data: ");
@@ -121,33 +129,28 @@ void readTime(){ // Lendo horario
     Serial.print("/");
     Serial.print(RTC.year);
   }
-  
-  // Nao esta de noite:
-  if ( !(RTC.hours >= 19 || RTC.hours < 7) ){// Nao esta entre 7h da noite e 6h da manha.
-      
-      // Gastando energia de dia? - envia sms
-      if(Irms > 0.30 && ldrValor <= CLARO){sendSMS();} 
-       // TODO: Implementar Sleep para que so envie mensagem apos 30 min de ter enviado a primeira mensagem sobre lampada acesa de dia.
-     
-      if(DEV){
-        // Imprime as informacoes no serial monitor:
-        Serial.print("\nDIA.");
-        Serial.print(" Hora: ");
-        Serial.print(RTC.hours);
-        Serial.print(":");
-        Serial.print(RTC.minutes);
-        Serial.print(":");
-        Serial.println(RTC.seconds);
-      }
-  }
-  
-  // Nao esta de dia - Lampada apagada de noite?
-  else{
-  
-    // Lampada queimada? - Envia SMS
-    if(Irms < 0.30 && ldrValor > CLARO){sendSMS();}
-    // TODO: Implementar Sleep para que so envie mensagem apos 30 min de ter enviado a primeira mensagem sobre lampada apagada a noite.
-  
+
+  // Esta de noite - Lampadada apagada?
+  if (RTC.hours >= 19 || RTC.hours < 7){// Esta entre 7h da noite e 6h da manha.
+
+    // Verifica corrente e luminosidade
+    if(Irms < CORRENTE){ // Pouca corrente nao importa se esta claro.
+
+        // Envia a uma mensagem persistindo envia mais na hora seguinte.
+        // MSG: Alerta de ponto sem iluminacao em horario noturno.
+        if(RTC.hours > ultimoEnvio){
+          sendSMS("Ponto sem iluminacao em horario noturno. Endereco...");
+        }
+        
+        // Funcionamento normal: Central ja foi notificada.
+        else{
+          if(DEV){Serial.print("\nLampada apagada durante a noite! Central ja notificada.\n");}
+        }
+    }
+    else{
+      if(DEV){Serial.print("\nFuncionamento normal: noite com lampada acesa (ainda que a noite esteja clara).\n");}
+    }
+
     if(DEV){
       Serial.print("\nNOITE.");
       Serial.print(" Hora: ");
@@ -156,6 +159,64 @@ void readTime(){ // Lendo horario
       Serial.print(RTC.minutes);
       Serial.print(":");
       Serial.println(RTC.seconds);
+      if(ultimoEnvio != -1){
+        Serial.print("Ultimo envio de SMS: ");
+        Serial.print(ultimoEnvio);
+        Serial.print("h\n");
+      }
+    }
+  }
+
+  // Esta em horario considerado dia
+  else{
+
+    // Verifica corrente e luminosidade
+    if(Irms >= CORRENTE && ldrValor <= CLARO){ // Corrente acima do permitido para o horario e luminosidade indicando que esta claro.
+
+      // Envia a uma mensagem persistindo envia mais na hora seguinte.
+      // MSG: Ponto de iluminacao aceso durante o dia.
+      if(RTC.hours > ultimoEnvio){
+        sendSMS("Ponto de iluminacao aceso durante o dia. Endereco...");
+      }
+      
+      // Funcionamento normal: Central ja foi notificada.
+      else{
+        if(DEV){Serial.print("\nLampada acesa durante o dia! Central ja notificada.\n");}
+      }
+    }
+    
+    // Funcionamentos normais:
+    else if(Irms < CORRENTE && ldrValor > CLARO){
+      
+      // Envia a uma mensagem persistindo envia mais na hora seguinte.
+      // MSG: Ponto de iluminacao aceso durante o dia.
+      if(RTC.hours > ultimoEnvio){
+        sendSMS("Ponto de iluminacao apagado durante dia escuro. Endereco...");
+      }
+      
+      // Funcionamento normal: Central ja foi notificada.
+      else{
+        if(DEV){Serial.print("\nLampada apagada durante dia escuro! Central ja notificada.\n");}
+      }
+    }
+    else{
+      if(DEV){Serial.print("\nFuncionamento normal: dia claro com lampada apagada.\n");}
+    }
+    
+    if(DEV){
+      // Imprime as informacoes no serial monitor:
+      Serial.print("\nDIA.");
+      Serial.print(" Hora: ");
+      Serial.print(RTC.hours);
+      Serial.print(":");
+      Serial.print(RTC.minutes);
+      Serial.print(":");
+      Serial.println(RTC.seconds);
+      if(ultimoEnvio != -1){
+        Serial.print("Ultimo envio de SMS: ");
+        Serial.print(ultimoEnvio);
+        Serial.print("h\n");
+      }
     }
   }
 }
@@ -169,7 +230,7 @@ void readAmperage(){ // Lendo corrente
     Serial.print("Corrente: ");
     Serial.println(Irms);
   }
-  
+
   delay(1);
 }
 
@@ -191,78 +252,71 @@ void readLuminosity(){ // Lendo luminosidade
      Serial.print("\nLuminosidade: ");
      Serial.println(ldrValor);
    }
-   
+
    delay(1);
 }
 
-void sendSMS(){ // Envia SMS para o numero cadastrado.
-  Serial.println("AT+CMGF=1");    
-  delay(2000);
-  Serial.print("AT+CMGS=\"");
-  Serial.print(telefone); 
-  Serial.write(0x22);
-  Serial.write(0x0D);
-  Serial.write(0x0A);
-  delay(2000);
-  Serial.print("Falha de energia detectada no bairro x, rua y.");
-  delay(500);
-  Serial.println (char(26));
-}
-
-void sendMessage(){ // Enviando mensagens
-    String no = "";
-    switch (mesh.getNodeId()) {
-      case 1508618939:
-        no = "NodeMCU #1";
-        break;
-      case 1509656251:
-        no = "NodeMCU #2";
-        break;
-      case 1507515130:
-        no = "NodeMCU #3";
-        break;
-      case 1507515133:
-        no = "NodeMCU #4";
-        break;
-      default:
-        no = "Nenhum";
-        break;
-    }
-    String msg = "|corrente|horario|luminosidade| do " + no;
-    //String msg = "|corrente|horario|luminosidade| do " + mesh.getNodeId();
-
-    Serial.println(msg);
-
-    // Envia para todos os nos da rede mesh.
-    mesh.sendBroadcast( msg );
+void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
+  if(estabilizador > 5){
+    Serial.println("AT+CMGF=1");
+    delay(2000);
+    Serial.print("AT+CMGS=\"");
+    Serial.print(telefone);
+    Serial.write(0x22);
+    Serial.write(0x0D);
+    Serial.write(0x0A);
+    delay(2000);
+    Serial.print(msg);
+    delay(500);
+    Serial.println (char(26));
+    
+    // Atualiza a hora do envio
+    ultimoEnvio = RTC.hours;
+  }
+  else{
+    estabilizador ++;
+  }
 }
 
 //************************************************************************************************************************
 // Funcoes Callback (Chamadas sempre que ocorre um evento):
 //************************************************************************************************************************
-void receivedCallback(uint32_t from, String &msg) { // Recebendo mensagens
+void receivedCallback(uint32_t from, String &msg) {
+    received.push_back(msg);
+    Serial.printf("CB: %d, %d\n", expected.size(), received.size());
+    //Serial.printf("Mensagem recebida do %u: %s\n", from.c_str(), msg.c_str());
+}
+
+void newConnectionCallback(uint32_t nodeId) { // Envia mensagem para o no que conectou
     String no = "";
-    switch (from) {
+    switch (mesh.getNodeId()) {
       case 1508618939:
-        no = "NodeMCU #1";
+        no = "NodeMCU1";
         break;
       case 1509656251:
-        no = "NodeMCU #2";
+        no = "NodeMCU2";
         break;
       case 1507515130:
-        no = "NodeMCU #3";
+        no = "NodeMCU3";
         break;
       case 1507515133:
-        no = "NodeMCU #4";
+        no = "NodeMCU4";
         break;
       default:
         no = "Nenhum";
         break;
     }
-    Serial.printf("Recebi a seguinte mensagem do %u: %s\n", no.c_str(), msg.c_str());
-}
 
-void delayReceivedCallback(uint32_t from, int32_t delay) {
-    Serial.printf("Delay de %d us\n", from, delay);
-}
+    // Formato da mensagem enviada: corrente!luminosidade!hora!no
+    // Ex.:  0.20!325!18!NodeMCU #1
+    String corrente = String(Irms);
+    String luminosidade = String(ldrValor);
+    String hora = String(RTC.hours);
+    String nodeMCU = String(no);
+    String msg = String(corrente + "!" + luminosidade + "!" + hora + "!" + nodeMCU);
 
+    if ( mesh.sendSingle(nodeId, msg) )
+        expected.push_back(msg);
+
+    sendingDone = true;
+}
