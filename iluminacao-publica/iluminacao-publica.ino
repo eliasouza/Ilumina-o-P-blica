@@ -24,9 +24,9 @@
 // Incluir as bibliotecas:
 //************************************************************************************************************************
 #include "EmonLib.h"
-#include "painlessMesh.h"
+//#include "painlessMesh.h"
 #include <SPI.h>
-//#include <painlessMesh.h>
+#include <painlessMesh.h>
 #include <ArduinoJson.h>
 #include <virtuabotixRTC.h>
 
@@ -34,7 +34,7 @@
 // Configuracao do acesso a rede Mesh:
 //************************************************************************************************************************
 #define MESH_SSID "SIMPIP" // Nome da sua rede Mesh;
-#define MESH_PASSWORD "simpip" // Senha da sua rede Mesh;
+#define MESH_PASSWORD "simpip123" // Senha da sua rede Mesh;
 #define MESH_PORT 5555 // Porta de comunicacao da rede Mesh.
 
 //************************************************************************************************************************
@@ -42,9 +42,7 @@
 //************************************************************************************************************************
 // MESH:
 painlessMesh mesh; // Instancia o objeto mesh;
-SimpleList<String> expected;
-SimpleList<String> received;
-bool sendingDone = false;
+SimpleList<uint32_t> nodes; // Cria uma lista para os nos da rede mesh (cada novo no conectado e add nela);
 
 // SCT E LDR:
 EnergyMonitor emon1; // Monitor de energia para o sensor de corrente;
@@ -57,8 +55,8 @@ int ldrValor = 0; // Valor lido do LDR;
 double Irms = 0.00; // Valor lido do leitor corrente;
 char telefone[] = "999058910"; // 988338506 Coloque aqui o numero de telefone que recebera a mensagem SMS.
 #define CLARO 700 // Cosiderado claro ate 700 de luminosidade;
-#define CORRENTE 0.25
-int estabilizador = 0;
+#define CORRENTE 0.25 // Media da variacao da corrente para determinar o gasto ou nao;
+int estabilizador = 0; // Usado enquanto o sistema inicializa para estabilizar a corrente.
 
 // RTC DS1302:
 virtuabotixRTC RTC(D5, D6, D7); // Pinos ligados ao modulo. Parametros: RTC(clock, data, rst)
@@ -67,7 +65,7 @@ int ultimoEnvio = -1;
 //************************************************************************************************************************
 // Configuracao de debug:
 //************************************************************************************************************************
-#define DEV true // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
+#define DEV false // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
 
 //************************************************************************************************************************
 // Configuracao do programa:
@@ -82,8 +80,9 @@ void setup() {
 
     // Inicializacao da rede mesh:
     mesh.init(MESH_SSID, MESH_PASSWORD, MESH_PORT); // Configura a rede mesh com os dados da rede sem fio;
-    mesh.onNewConnection(&newConnectionCallback);
     mesh.onReceive(&receivedCallback); // Chamada da funcao ao receber uma mensagem;
+    mesh.onNewConnection(&newConnectionCallback); // Chamada da funcao quando um novo no se conecta a rede mesh;
+    mesh.onChangedConnections(&changedConnectionCallback); // Chamada da funcao ao mudar de conexao;
 
     // Calibracao do pino
     emon1.current(PINO_MUX, (numVoltasBobina / resistorCarga));
@@ -101,13 +100,16 @@ void loop() {
     mesh.update();
 
     // Corrente:
-    readAmperage();
+    //readAmperage();
 
     // Luminosidade:
-    readLuminosity();
+    //readLuminosity();
     
     // Horario:
-    readTime();
+    //readTime();
+    
+    // Envia Status para a rede
+    sendMessage();
  }
 
 //************************************************************************************************************************
@@ -278,45 +280,47 @@ void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
   }
 }
 
+void sendMessage(){ // Enviando mensagens    
+    // Formato da mensagem enviada: corrente!luminosidade!hora!no
+    // Ex.:  0.20!325!18!NodeMCU #1
+    String no = String(mesh.getNodeId());
+    String corrente = String(Irms);
+    String luminosidade = String(ldrValor);
+    String hora = String(RTC.hours);
+    String msg = String(" " + corrente + "!" + luminosidade + "!" + hora + "!" + no + "\n\n");
+
+    Serial.print("\nEnviando status do no ");
+    Serial.print(mesh.getNodeId());
+    Serial.println(" para todos os nos da rede.\n");
+
+    // Envia para todos os nos da rede mesh.
+    mesh.sendBroadcast(msg);
+    delay(10);
+}
+
 //************************************************************************************************************************
 // Funcoes Callback (Chamadas sempre que ocorre um evento):
 //************************************************************************************************************************
 void receivedCallback(uint32_t from, String &msg) {
-    received.push_back(msg);
-    Serial.printf("CB: %d, %d\n", expected.size(), received.size());
-    //Serial.printf("Mensagem recebida do %u: %s\n", from.c_str(), msg.c_str());
+    Serial.print("Mensagem recebida: ");
+    Serial.println(msg);
 }
 
-void newConnectionCallback(uint32_t nodeId) { // Envia mensagem para o no que conectou
-    String no = "";
-    switch (mesh.getNodeId()) {
-      case 1508618939:
-        no = "NodeMCU1";
-        break;
-      case 1509656251:
-        no = "NodeMCU2";
-        break;
-      case 1507515130:
-        no = "NodeMCU3";
-        break;
-      case 1507515133:
-        no = "NodeMCU4";
-        break;
-      default:
-        no = "Nenhum";
-        break;
+void changedConnectionCallback() { // Mudando de conexo
+    Serial.printf("Conexao alterada (%s)\n", mesh.subConnectionJson().c_str());
+    nodes = mesh.getNodeList();
+    Serial.printf("Quantidade de no(s) conectado(s): %d\n", nodes.size());
+    Serial.printf("Lista de conexoes:\n");
+    SimpleList<uint32_t>::iterator node = nodes.begin();
+    
+    while (node != nodes.end()) {           
+      Serial.printf(" %s", *node);
+      node++;
     }
+    
+    Serial.println();
+}
 
-    // Formato da mensagem enviada: corrente!luminosidade!hora!no
-    // Ex.:  0.20!325!18!NodeMCU #1
-    String corrente = String(Irms);
-    String luminosidade = String(ldrValor);
-    String hora = String(RTC.hours);
-    String nodeMCU = String(no);
-    String msg = String(corrente + "!" + luminosidade + "!" + hora + "!" + nodeMCU);
-
-    if ( mesh.sendSingle(nodeId, msg) )
-        expected.push_back(msg);
-
-    sendingDone = true;
+void newConnectionCallback(uint32_t nodeId) {
+    Serial.printf("Nova conexao com no cujo id e: %u\n", nodeId);
 }
