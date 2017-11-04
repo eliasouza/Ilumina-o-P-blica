@@ -257,7 +257,7 @@ void readLuminosity(){ // Lendo luminosidade
 }
 
 void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
-  if(estabilizador > 5){
+  if(estabilizador > 9){
     Serial.println("AT+CMGF=1");
     delay(2000);
     Serial.print("AT+CMGS=\"");
@@ -274,7 +274,7 @@ void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
     ultimoEnvio = RTC.hours;
   }
   else{
-    estabilizador ++;
+    estabilizador++;
   }
 }
 
