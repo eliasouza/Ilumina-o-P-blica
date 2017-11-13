@@ -15,20 +15,20 @@
 // 1. Le sensor de corrente sct;
 // 2. Le sensor de luminosidade ldr;
 // 3. Le horario com RTC DS1302;
-// 4. Envia mensagem broadcast;
-// 5. Recebe mensagem broadcast callback;
-// 6. Envia SMS com A6.
+// 4. Envia mensagem broadcast para os nos da rede mesh;
+// 5. Recebe mensagem broadcast dos nos da rede mesh;
+// 6. Envia SMS com SIM800L.
 //************************************************************************************************************************
 
 //************************************************************************************************************************
 // Incluir as bibliotecas:
 //************************************************************************************************************************
 #include "EmonLib.h"
-//#include "painlessMesh.h"
 #include <SPI.h>
 #include <painlessMesh.h>
 #include <ArduinoJson.h>
 #include <virtuabotixRTC.h>
+#include <TaskScheduler.h>
 
 //************************************************************************************************************************
 // Configuracao do acesso a rede Mesh:
@@ -60,12 +60,24 @@ int estabilizador = 0; // Usado enquanto o sistema inicializa para estabilizar a
 
 // RTC DS1302:
 virtuabotixRTC RTC(D5, D6, D7); // Pinos ligados ao modulo. Parametros: RTC(clock, data, rst)
-int ultimoEnvio = -1;
+int ultimoEnvioHora = -1; // Inicializa a hora de envio com valor absurdo
+int ultimoEnvioMinutos = -1; // Inicializa o minuto de envio com valor absurdo
+
+//************************************************************************************************************************
+// Configuracao de tasks - Parametros: (tempo em millis, intervalo de repeticao, callback)
+//************************************************************************************************************************
+Task t1(1, TASK_FOREVER, &readAmperage);   // Tarefa 1: Executa SCT;
+Task t2(1, TASK_FOREVER, &readLuminosity); // Tarefa 2: Executa LDR;
+Task t3(2000, TASK_FOREVER, &readTime);    // Tarefa 3: Executa RTC;
+Task t4(3000, TASK_FOREVER, &sendMessage); // Tarefa 4: Comunicacao Mesh.
+
+// Escalonador de tarefas:
+Scheduler runner;
 
 //************************************************************************************************************************
 // Configuracao de debug:
 //************************************************************************************************************************
-#define DEV false // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
+#define DEV true // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
 
 //************************************************************************************************************************
 // Configuracao do programa:
@@ -88,28 +100,44 @@ void setup() {
     emon1.current(PINO_MUX, (numVoltasBobina / resistorCarga));
 
     // Configuraçes iniciais de data e hora - Apos configurar, comentar a linha abaixo;
-    // RTC.setDS1302Time(00, 11, 15, 4, 1, 11, 2017); // Formato: (segundos, minutos, hora, dia da semana, dia do mes, mes, ano);
+    //RTC.setDS1302Time(00, 47, 22, 1, 12, 11, 2017); // Formato: (segundos, minutos, hora, dia da semana, dia do mes, mes, ano);
+
+    // Inicializacao do TaskScheduler
+    runner.init();
+    Serial.println("\nAgendador inicializado.");
+
+    runner.addTask(t1);
+    Serial.println("\nTarefa 1 (SCT) add.");
+
+    runner.addTask(t2);
+    Serial.println("Tarefa 2 (LDR) add.");
+
+    runner.addTask(t3);
+    Serial.println("Tarefa 3 (RTC) add.");
+
+    runner.addTask(t4);
+    Serial.println("Tarefa 4 (MESH) add.");
+
+    delay(5000);
+
+    t1.enable();
+    Serial.println("Tarefa 1 (SCT) habilitada.");
+    t2.enable();
+    Serial.println("Tarefa 2 (LDR) habilitada.");
+    t3.enable();
+    Serial.println("Tarefa 3 (RTC) habilitada.");
+    t4.enable();
+    Serial.println("Tarefa 4 (MESH) habilitada.");
 }
 
 //************************************************************************************************************************
 // Execucao do programa:
 //************************************************************************************************************************
 void loop() {
-
-    // Atualizar informacoes da rede mesh:
-    mesh.update();
-
-    // Corrente:
-    //readAmperage();
-
-    // Luminosidade:
-    //readLuminosity();
-    
-    // Horario:
-    //readTime();
-    
-    // Envia Status para a rede
-    sendMessage();
+  // Atualizar informacoes da rede mesh:
+  mesh.update();
+  // Executar tarefas:
+  runner.execute();
  }
 
 //************************************************************************************************************************
@@ -140,10 +168,10 @@ void readTime(){ // Lendo horario
 
         // Envia a uma mensagem persistindo envia mais na hora seguinte.
         // MSG: Alerta de ponto sem iluminacao em horario noturno.
-        if(RTC.hours > ultimoEnvio){
+        if(RTC.hours > ultimoEnvioHora){
           sendSMS("Ponto sem iluminacao em horario noturno. Endereco...");
         }
-        
+
         // Funcionamento normal: Central ja foi notificada.
         else{
           if(DEV){Serial.print("\nLampada apagada durante a noite! Central ja notificada.\n");}
@@ -161,10 +189,12 @@ void readTime(){ // Lendo horario
       Serial.print(RTC.minutes);
       Serial.print(":");
       Serial.println(RTC.seconds);
-      if(ultimoEnvio != -1){
+      if(ultimoEnvioHora != -1){
         Serial.print("Ultimo envio de SMS: ");
-        Serial.print(ultimoEnvio);
-        Serial.print("h\n");
+        Serial.print(ultimoEnvioHora);
+        Serial.print("h:");
+        Serial.print(ultimoEnvioMinutos);
+        Serial.print("m\n");
       }
     }
   }
@@ -177,25 +207,25 @@ void readTime(){ // Lendo horario
 
       // Envia a uma mensagem persistindo envia mais na hora seguinte.
       // MSG: Ponto de iluminacao aceso durante o dia.
-      if(RTC.hours > ultimoEnvio){
+      if(RTC.hours > ultimoEnvioHora){
         sendSMS("Ponto de iluminacao aceso durante o dia. Endereco...");
       }
-      
+
       // Funcionamento normal: Central ja foi notificada.
       else{
         if(DEV){Serial.print("\nLampada acesa durante o dia! Central ja notificada.\n");}
       }
     }
-    
+
     // Funcionamentos normais:
     else if(Irms < CORRENTE && ldrValor > CLARO){
-      
+
       // Envia a uma mensagem persistindo envia mais na hora seguinte.
       // MSG: Ponto de iluminacao aceso durante o dia.
-      if(RTC.hours > ultimoEnvio){
+      if(RTC.hours > ultimoEnvioHora){
         sendSMS("Ponto de iluminacao apagado durante dia escuro. Endereco...");
       }
-      
+
       // Funcionamento normal: Central ja foi notificada.
       else{
         if(DEV){Serial.print("\nLampada apagada durante dia escuro! Central ja notificada.\n");}
@@ -204,7 +234,7 @@ void readTime(){ // Lendo horario
     else{
       if(DEV){Serial.print("\nFuncionamento normal: dia claro com lampada apagada.\n");}
     }
-    
+
     if(DEV){
       // Imprime as informacoes no serial monitor:
       Serial.print("\nDIA.");
@@ -214,10 +244,12 @@ void readTime(){ // Lendo horario
       Serial.print(RTC.minutes);
       Serial.print(":");
       Serial.println(RTC.seconds);
-      if(ultimoEnvio != -1){
+      if(ultimoEnvioHora != -1){
         Serial.print("Ultimo envio de SMS: ");
-        Serial.print(ultimoEnvio);
-        Serial.print("h\n");
+        Serial.print(ultimoEnvioHora);
+        Serial.print("h:");
+        Serial.print(ultimoEnvioMinutos);
+        Serial.print("m\n");
       }
     }
   }
@@ -225,15 +257,19 @@ void readTime(){ // Lendo horario
 
 void readAmperage(){ // Lendo corrente
   changeSensor(HIGH); // Seleciona no mux o leitor de corrente;
-  Irms = emon1.calcIrms(1480); //Calcula a corrente
-
+  double corrente_lida = emon1.calcIrms(1480);
+  
+  //Calcula a corrente:
+  if(corrente_lida > 0.05 && corrente_lida < CORRENTE) //Filtra outiliers
+    Irms = 0.00;
+  else
+    Irms = corrente_lida;
+  
   if(DEV){
     // Mostra o valor da corrente no serial monitor:
     Serial.print("Corrente: ");
     Serial.println(Irms);
   }
-
-  delay(1);
 }
 
 void readLuminosity(){ // Lendo luminosidade
@@ -254,12 +290,10 @@ void readLuminosity(){ // Lendo luminosidade
      Serial.print("\nLuminosidade: ");
      Serial.println(ldrValor);
    }
-
-   delay(1);
 }
 
 void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
-  if(estabilizador > 9){
+  if(estabilizador > 6){
     Serial.println("AT+CMGF=1");
     delay(2000);
     Serial.print("AT+CMGS=\"");
@@ -271,22 +305,27 @@ void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
     Serial.print(msg);
     delay(500);
     Serial.println (char(26));
-    
+
     // Atualiza a hora do envio
-    ultimoEnvio = RTC.hours;
+    ultimoEnvioHora = RTC.hours;
+    ultimoEnvioMinutos = RTC.minutes;
   }
   else{
     estabilizador++;
+    delay(1000);
   }
 }
 
-void sendMessage(){ // Enviando mensagens    
+//************************************************************************************************************************
+// Funcoes da rede Mesh:
+//************************************************************************************************************************
+void sendMessage(){ // Enviando mensagens
     // Formato da mensagem enviada: corrente!luminosidade!hora!no
-    // Ex.:  0.20!325!18!NodeMCU #1
+    // Ex.:  0.20!325!18:30!NodeMCU#1
     String no = String(mesh.getNodeId());
     String corrente = String(Irms);
     String luminosidade = String(ldrValor);
-    String hora = String(RTC.hours);
+    String hora = String(RTC.hours + ":" + RTC.minutes);
     String msg = String(" " + corrente + "!" + luminosidade + "!" + hora + "!" + no + "\n\n");
 
     Serial.print("\nEnviando status do no ");
@@ -295,12 +334,8 @@ void sendMessage(){ // Enviando mensagens
 
     // Envia para todos os nos da rede mesh.
     mesh.sendBroadcast(msg);
-    delay(10);
 }
 
-//************************************************************************************************************************
-// Funcoes Callback (Chamadas sempre que ocorre um evento):
-//************************************************************************************************************************
 void receivedCallback(uint32_t from, String &msg) {
     Serial.print("Mensagem recebida: ");
     Serial.println(msg);
@@ -312,12 +347,12 @@ void changedConnectionCallback() { // Mudando de conexo
     Serial.printf("Quantidade de no(s) conectado(s): %d\n", nodes.size());
     Serial.printf("Lista de conexoes:\n");
     SimpleList<uint32_t>::iterator node = nodes.begin();
-    
-    while (node != nodes.end()) {           
+
+    while (node != nodes.end()) {
       Serial.printf(" %s", *node);
       node++;
     }
-    
+
     Serial.println();
 }
 
