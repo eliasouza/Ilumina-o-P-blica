@@ -53,7 +53,6 @@ double resistorCarga = 22; // Carga do resistor;
 #define PINO_MUX A0 // Pino responsavel por ler a entrada analogica selecionada pelo seletor;
 int ldrValor = 0; // Valor lido do LDR;
 double Irms = 0.00; // Valor lido do leitor corrente;
-char telefone[] = "999058910"; // 988338506 Coloque aqui o numero de telefone que recebera a mensagem SMS.
 #define CLARO 700 // Cosiderado claro ate 700 de luminosidade;
 #define CORRENTE 0.25 // Media da variacao da corrente para determinar o gasto ou nao;
 int estabilizador = 0; // Usado enquanto o sistema inicializa para estabilizar a corrente.
@@ -63,21 +62,66 @@ virtuabotixRTC RTC(D5, D6, D7); // Pinos ligados ao modulo. Parametros: RTC(cloc
 int ultimoEnvioHora = -1; // Inicializa a hora de envio com valor absurdo
 int ultimoEnvioMinutos = -1; // Inicializa o minuto de envio com valor absurdo
 
+// MSG SIM 800L:
+String msgDiaClaro = String("Ponto de iluminacao aceso durante dia claro. Endereco...");
+String msgDiaEscuro = String("Ponto de iluminacao apagado durante dia escuro. Endereco...");
+String msgNoite = String("Ponto sem iluminacao em horario noturno. Endereco...");
+String telefone = String("988338506"); // Telefone da empresa que faz manutencao na iluminacao publica
+
+// Escopo da funcao:
+void sendMessage();
+
 //************************************************************************************************************************
 // Configuracao de tasks - Parametros: (tempo em millis, intervalo de repeticao, callback)
 //************************************************************************************************************************
+Task taskSendMessage( TASK_SECOND * 1 , TASK_FOREVER, &sendMessage );
+Task taskReadAmperage( TASK_SECOND * 0.1 , TASK_FOREVER, &readAmperage );
+Task taskReadLuminosity( TASK_SECOND * 0.1 , TASK_FOREVER, &readLuminosity );
+Task taskReadTime( TASK_SECOND * 0.1 , TASK_FOREVER, &readTime );
+
+/*
 Task t1(1, TASK_FOREVER, &readAmperage);   // Tarefa 1: Executa SCT;
 Task t2(1, TASK_FOREVER, &readLuminosity); // Tarefa 2: Executa LDR;
-Task t3(2000, TASK_FOREVER, &readTime);    // Tarefa 3: Executa RTC;
-Task t4(3000, TASK_FOREVER, &sendMessage); // Tarefa 4: Comunicacao Mesh.
+Task t3(10, TASK_FOREVER, &readTime);    // Tarefa 3: Executa RTC;
+Task t4(1000, TASK_FOREVER, &sendMessage); // Tarefa 4: Comunicacao Mesh.
+*/
 
 // Escalonador de tarefas:
-Scheduler runner;
+// Scheduler runner;
 
 //************************************************************************************************************************
 // Configuracao de debug:
 //************************************************************************************************************************
 #define DEV true // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
+
+void receivedCallback(uint32_t from, String &msg) {
+    Serial.print("Mensagem recebida do no ");
+    Serial.print(from + ": ");
+    Serial.println(msg);
+}
+
+void changedConnectionCallback() { // Mudando de conexo
+    Serial.printf("Conexao alterada (%s)\n", mesh.subConnectionJson().c_str());
+    nodes = mesh.getNodeList();
+    Serial.printf("Quantidade de no(s) conectado(s): %d\n", nodes.size());
+    Serial.printf("Lista de conexoes:\n");
+    SimpleList<uint32_t>::iterator node = nodes.begin();
+
+    while (node != nodes.end()) {
+      Serial.printf(" %s", *node);
+      node++;
+    }
+
+    Serial.println();
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+    Serial.printf("Nova conexao com no cujo id e: %u\n", nodeId);
+}
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+    Serial.printf("Tempo ajustado: %u. Offset = %d\n", mesh.getNodeTime(), offset);
+}
 
 //************************************************************************************************************************
 // Configuracao do programa:
@@ -95,13 +139,28 @@ void setup() {
     mesh.onReceive(&receivedCallback); // Chamada da funcao ao receber uma mensagem;
     mesh.onNewConnection(&newConnectionCallback); // Chamada da funcao quando um novo no se conecta a rede mesh;
     mesh.onChangedConnections(&changedConnectionCallback); // Chamada da funcao ao mudar de conexao;
-
+    mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+    
+    // Add tarefas
+    mesh.scheduler.addTask( taskSendMessage );
+    taskSendMessage.enable() ;
+    
+    mesh.scheduler.addTask( taskReadAmperage );
+    taskReadAmperage.enable() ;
+    
+    mesh.scheduler.addTask( taskReadLuminosity );
+    taskReadLuminosity.enable() ;
+    
+    mesh.scheduler.addTask( taskReadTime );
+    taskReadTime.enable() ;
+  
     // Calibracao do pino
     emon1.current(PINO_MUX, (numVoltasBobina / resistorCarga));
 
     // Configuraçes iniciais de data e hora - Apos configurar, comentar a linha abaixo;
     //RTC.setDS1302Time(00, 47, 22, 1, 12, 11, 2017); // Formato: (segundos, minutos, hora, dia da semana, dia do mes, mes, ano);
-
+    
+    /*
     // Inicializacao do TaskScheduler
     runner.init();
     Serial.println("\nAgendador inicializado.");
@@ -117,7 +176,7 @@ void setup() {
 
     runner.addTask(t4);
     Serial.println("Tarefa 4 (MESH) add.");
-
+    
     delay(5000);
 
     t1.enable();
@@ -128,6 +187,7 @@ void setup() {
     Serial.println("Tarefa 3 (RTC) habilitada.");
     t4.enable();
     Serial.println("Tarefa 4 (MESH) habilitada.");
+    */
 }
 
 //************************************************************************************************************************
@@ -136,8 +196,9 @@ void setup() {
 void loop() {
   // Atualizar informacoes da rede mesh:
   mesh.update();
+  
   // Executar tarefas:
-  runner.execute();
+  // runner.execute();
  }
 
 //************************************************************************************************************************
@@ -166,10 +227,10 @@ void readTime(){ // Lendo horario
     // Verifica corrente e luminosidade
     if(Irms < CORRENTE){ // Pouca corrente nao importa se esta claro.
 
-        // Envia a uma mensagem persistindo envia mais na hora seguinte.
+        // Envia uma mensagem persistindo envia mais na hora seguinte.
         // MSG: Alerta de ponto sem iluminacao em horario noturno.
         if(RTC.hours > ultimoEnvioHora){
-          sendSMS("Ponto sem iluminacao em horario noturno. Endereco...");
+          requestSMS(msgNoite);
         }
 
         // Funcionamento normal: Central ja foi notificada.
@@ -208,7 +269,7 @@ void readTime(){ // Lendo horario
       // Envia a uma mensagem persistindo envia mais na hora seguinte.
       // MSG: Ponto de iluminacao aceso durante o dia.
       if(RTC.hours > ultimoEnvioHora){
-        sendSMS("Ponto de iluminacao aceso durante o dia. Endereco...");
+        requestSMS(msgDiaClaro);
       }
 
       // Funcionamento normal: Central ja foi notificada.
@@ -223,7 +284,7 @@ void readTime(){ // Lendo horario
       // Envia a uma mensagem persistindo envia mais na hora seguinte.
       // MSG: Ponto de iluminacao aceso durante o dia.
       if(RTC.hours > ultimoEnvioHora){
-        sendSMS("Ponto de iluminacao apagado durante dia escuro. Endereco...");
+        requestSMS(msgDiaEscuro);
       }
 
       // Funcionamento normal: Central ja foi notificada.
@@ -253,6 +314,9 @@ void readTime(){ // Lendo horario
       }
     }
   }
+  
+  // Atualiza o tempo entre 1 e 5 segundos:
+   taskReadTime.setInterval( random( TASK_SECOND * 0.1, TASK_SECOND * 0.5 ));
 }
 
 void readAmperage(){ // Lendo corrente
@@ -270,6 +334,9 @@ void readAmperage(){ // Lendo corrente
     Serial.print("Corrente: ");
     Serial.println(Irms);
   }
+  
+  // Atualiza o tempo entre 1 e 5 segundos:
+   taskReadAmperage.setInterval( random( TASK_SECOND * 0.1, TASK_SECOND * 0.5 ));
 }
 
 void readLuminosity(){ // Lendo luminosidade
@@ -290,30 +357,31 @@ void readLuminosity(){ // Lendo luminosidade
      Serial.print("\nLuminosidade: ");
      Serial.println(ldrValor);
    }
+   
+   // Atualiza o tempo entre 1 e 5 segundos:
+   taskReadLuminosity.setInterval( random( TASK_SECOND * 0.1, TASK_SECOND * 0.5 ));
 }
 
-void sendSMS(String msg){ // Envia SMS para o numero cadastrado.
-  if(estabilizador > 6){
-    Serial.println("AT+CMGF=1");
-    delay(2000);
-    Serial.print("AT+CMGS=\"");
-    Serial.print(telefone);
-    Serial.write(0x22);
-    Serial.write(0x0D);
-    Serial.write(0x0A);
-    delay(2000);
-    Serial.print(msg);
-    delay(500);
-    Serial.println (char(26));
+void requestSMS(String mensagem){ // Requisita o envio de SMS para o no principal.
+    // Formato da mensagem enviada: verificador!corrente!luminosidade!hora!no
+    // Ex.:  V!0.20!325!18:30!NodeMCU#1
+    String no = String(mesh.getNodeId());
+    String corrente = String(Irms);
+    String luminosidade = String(ldrValor);
+    String hora = String(RTC.hours);
+    String msg = String("V!" + corrente + "!" + luminosidade + "!" + hora + "!" + no + "!" + mensagem + "\n\n");
+    Serial.print("\nNo ");
+    Serial.print(mesh.getNodeId());
+    Serial.print(" requisitando envio de SMS ao no principal com a mensagem: ");
+    Serial.println(msg);
 
-    // Atualiza a hora do envio
+    // Atualiza a hora e minuto do ultimo envio:
     ultimoEnvioHora = RTC.hours;
     ultimoEnvioMinutos = RTC.minutes;
-  }
-  else{
-    estabilizador++;
-    delay(1000);
-  }
+    
+    
+    // Envia para todos os nos da rede mesh.
+    mesh.sendBroadcast(msg);
 }
 
 //************************************************************************************************************************
@@ -325,37 +393,17 @@ void sendMessage(){ // Enviando mensagens
     String no = String(mesh.getNodeId());
     String corrente = String(Irms);
     String luminosidade = String(ldrValor);
-    String hora = String(RTC.hours + ":" + RTC.minutes);
-    String msg = String(" " + corrente + "!" + luminosidade + "!" + hora + "!" + no + "\n\n");
+    String hora = String(RTC.hours);
+    String msg = String("F!" + corrente + "!" + luminosidade + "!" + hora + "!" + no + "\n\n");
 
     Serial.print("\nEnviando status do no ");
     Serial.print(mesh.getNodeId());
-    Serial.println(" para todos os nos da rede.\n");
+    Serial.print(" para todos os nos da rede com a seguinte mensagem: ");
+    Serial.println(msg);
 
     // Envia para todos os nos da rede mesh.
     mesh.sendBroadcast(msg);
-}
-
-void receivedCallback(uint32_t from, String &msg) {
-    Serial.print("Mensagem recebida: ");
-    Serial.println(msg);
-}
-
-void changedConnectionCallback() { // Mudando de conexo
-    Serial.printf("Conexao alterada (%s)\n", mesh.subConnectionJson().c_str());
-    nodes = mesh.getNodeList();
-    Serial.printf("Quantidade de no(s) conectado(s): %d\n", nodes.size());
-    Serial.printf("Lista de conexoes:\n");
-    SimpleList<uint32_t>::iterator node = nodes.begin();
-
-    while (node != nodes.end()) {
-      Serial.printf(" %s", *node);
-      node++;
-    }
-
-    Serial.println();
-}
-
-void newConnectionCallback(uint32_t nodeId) {
-    Serial.printf("Nova conexao com no cujo id e: %u\n", nodeId);
+    
+    // Atualiza o tempo entre 1 e 5 segundos:
+    taskSendMessage.setInterval( random( TASK_SECOND * 1, TASK_SECOND * 5 ));
 }
