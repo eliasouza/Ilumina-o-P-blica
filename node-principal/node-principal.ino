@@ -57,11 +57,6 @@ String telefone = String("988338506"); // Telefone da empresa que faz manutencao
 //************************************************************************************************************************
 Task taskSendMessage( TASK_SECOND * 1 , TASK_FOREVER, &sendMessage );
 Task taskReadLuminosity( TASK_SECOND * 1 , TASK_FOREVER, &readLuminosity );
-//Task t1(1, TASK_FOREVER, &readLuminosity); // Tarefa 1: Executa LDR;
-//Task t2(1000, TASK_FOREVER, &sendMessage); // Tarefa 2: Comunicacao Mesh.
-
-// Escalonador de tarefas:
-//Scheduler runner;
 
 //************************************************************************************************************************
 // Configuracao de debug:
@@ -90,25 +85,6 @@ void setup() {
     
     mesh.scheduler.addTask( taskReadLuminosity );
     taskReadLuminosity.enable() ;
-
-    /*
-    // Inicializacao do TaskScheduler
-    runner.init();
-    Serial.println("\nAgendador inicializado.");
-
-    runner.addTask(t1);
-    Serial.println("\nTarefa 1 (LDR) add.");
-
-    runner.addTask(t2);
-    Serial.println("Tarefa 2 (MESH) add.");
-
-    delay(5000);
-
-    t1.enable();
-    Serial.println("Tarefa 1 (LDR) habilitada.");
-    t2.enable();
-    Serial.println("Tarefa 2 (MESH) habilitada.");
-    */
 }
 
 //************************************************************************************************************************
@@ -117,9 +93,6 @@ void setup() {
 void loop() {
   // Atualizar informacoes da rede mesh:
   mesh.update();
-  
-  // Executar tarefas:
-  // runner.execute();
  }
 
 //************************************************************************************************************************
@@ -178,50 +151,47 @@ void sendMessage(){ // Enviando mensagens
 }
 
 void receivedCallback(uint32_t from, String &msg) {
-    Serial.print("Mensagem recebida do no ");
+    Serial.print("Mensagem recebida do no: ");
     Serial.print(from + ": ");
     Serial.println(msg);
-    
-    // Destrinchar a mensagem recebida e criar variaveis: validador, correnteRecebida, luminosidadeRecebida (int), horaRecebida, noRecebido. 
-  /*   
-    // Percorrer a String e dividir em partes:
-    const char *msgRecebida = msg.toCharArray(10, 25);
-    char *token, *str, *tofree;
-    tofree = str = strdup(msgRecebida);
-    
-    while ( (token = strsep(&str, "!")) ){
-      
-      // Converte cada um conforme seu tipo
-      Serial.println(token);
-    }
-    free(tofree);
-  */
-  
-  // TODO: stringOne.substring(14, 18) == "text";
-  
-    // Verificar se tem o V;
+
+    // Desmenbrando a String recebida:
+    String estado = msg.substring(0, 1);
+    String correnteRecebida = msg.substring(2, 6);
+    String msgRaw = msg.substring(7, 10);
+    int luminosidadeRecebida = atoi(msgRaw.c_str());
+    String horaRecebida = msg.substring(11, 12);
+    String idNoRecebido = msg.substring(13, 23);
     
     /*
-    if (msg.substring(1,2) == "V") {
-         
-       // Verifica a luminosidade se esta de acordo com a do proprio no
-       String lumRaw = msg.substring(8);
-       int luminosidadeRecebida = atoi(lumRaw.c_str());
-       
+    Serial.println(estado);
+    Serial.println(correnteRecebida);
+    Serial.println(luminosidadeRecebida);
+    Serial.println(horaRecebida);
+    Serial.println(idNoRecebido);
+    */
+   
+    if (estado == "V") { //Se V envia sms
+      
+       // Verifica a luminosidade se esta de acordo com a do proprio no        
        if( ((luminosidadeRecebida <= CLARO) && (ldrValor <= CLARO)) || ((luminosidadeRecebida >= CLARO) && (ldrValor >= CLARO)) ){  
+         
+         Serial.print("Luminosidade recebida do no receptor/emissor: ");
+         Serial.print(luminosidadeRecebida);
+         Serial.print("\nLuminosidade do no principal: ");
+         Serial.print(ldrValor);
+         
          // Identifica o no e envia SMS.
-         String noRecebido = msg.substring(15);
          String msgRecebida = msg.substring(24);
          // sendSMS(msgRecebida);
          
-         Serial.print("Enviar SMS: ");
+         Serial.print("\nEnviar SMS. Mensagem Recebida: ");
          Serial.println(msgRecebida);
        }
     }else{
       Serial.print("Nao enviar SMS. Mensagem Recebida: ");
       Serial.println(msg);
     }
-    */
 }
 
 void changedConnectionCallback() { // Mudando de conexo

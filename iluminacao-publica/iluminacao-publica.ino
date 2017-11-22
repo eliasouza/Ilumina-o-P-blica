@@ -79,16 +79,6 @@ Task taskReadAmperage( TASK_SECOND * 0.1 , TASK_FOREVER, &readAmperage );
 Task taskReadLuminosity( TASK_SECOND * 0.1 , TASK_FOREVER, &readLuminosity );
 Task taskReadTime( TASK_SECOND * 0.1 , TASK_FOREVER, &readTime );
 
-/*
-Task t1(1, TASK_FOREVER, &readAmperage);   // Tarefa 1: Executa SCT;
-Task t2(1, TASK_FOREVER, &readLuminosity); // Tarefa 2: Executa LDR;
-Task t3(10, TASK_FOREVER, &readTime);    // Tarefa 3: Executa RTC;
-Task t4(1000, TASK_FOREVER, &sendMessage); // Tarefa 4: Comunicacao Mesh.
-*/
-
-// Escalonador de tarefas:
-// Scheduler runner;
-
 //************************************************************************************************************************
 // Configuracao de debug:
 //************************************************************************************************************************
@@ -159,35 +149,6 @@ void setup() {
 
     // Configuraçes iniciais de data e hora - Apos configurar, comentar a linha abaixo;
     //RTC.setDS1302Time(00, 47, 22, 1, 12, 11, 2017); // Formato: (segundos, minutos, hora, dia da semana, dia do mes, mes, ano);
-    
-    /*
-    // Inicializacao do TaskScheduler
-    runner.init();
-    Serial.println("\nAgendador inicializado.");
-
-    runner.addTask(t1);
-    Serial.println("\nTarefa 1 (SCT) add.");
-
-    runner.addTask(t2);
-    Serial.println("Tarefa 2 (LDR) add.");
-
-    runner.addTask(t3);
-    Serial.println("Tarefa 3 (RTC) add.");
-
-    runner.addTask(t4);
-    Serial.println("Tarefa 4 (MESH) add.");
-    
-    delay(5000);
-
-    t1.enable();
-    Serial.println("Tarefa 1 (SCT) habilitada.");
-    t2.enable();
-    Serial.println("Tarefa 2 (LDR) habilitada.");
-    t3.enable();
-    Serial.println("Tarefa 3 (RTC) habilitada.");
-    t4.enable();
-    Serial.println("Tarefa 4 (MESH) habilitada.");
-    */
 }
 
 //************************************************************************************************************************
@@ -196,9 +157,6 @@ void setup() {
 void loop() {
   // Atualizar informacoes da rede mesh:
   mesh.update();
-  
-  // Executar tarefas:
-  // runner.execute();
  }
 
 //************************************************************************************************************************
