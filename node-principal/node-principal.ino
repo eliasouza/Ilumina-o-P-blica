@@ -50,7 +50,11 @@ int ldrValor = 0; // Valor lido do LDR;
 String msgDiaClaro = String("Ponto de iluminacao aceso durante dia claro. Endereco...");
 String msgDiaEscuro = String("Ponto de iluminacao apagado durante dia escuro. Endereco...");
 String msgNoite = String("Ponto sem iluminacao em horario noturno. Endereco...");
-String telefone = String("988338506"); // Telefone da empresa que faz manutencao na iluminacao publica
+#define TELEFONE "988338506" //= String("999058910"); // Telefone da empresa que faz manutencao na iluminacao publica: 988338506
+
+// Escopo da funcao:
+void sendMessage();
+void sendSMS();
 
 //************************************************************************************************************************
 // Configuracao de tasks - Parametros: (tempo em millis, intervalo de repeticao, callback)
@@ -61,13 +65,94 @@ Task taskReadLuminosity( TASK_SECOND * 1 , TASK_FOREVER, &readLuminosity );
 //************************************************************************************************************************
 // Configuracao de debug:
 //************************************************************************************************************************
-#define DEV true // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
+#define DEV false // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
+
+
+//************************************************************************************************************************
+// Funcoes callback:
+//************************************************************************************************************************
+void receivedCallback(uint32_t from, String &msg) {
+    Serial.print("Mensagem recebida do no: ");
+    Serial.print(from + ": ");
+    Serial.println(msg);
+
+    // Desmembrando a String recebida:
+    String estado = msg.substring(0, 1);
+    String correnteRecebida = msg.substring(2, 6);
+    String msgRaw = msg.substring(7, 10);
+    int luminosidadeRecebida = atoi(msgRaw.c_str());
+    String horaRecebida = msg.substring(11, 12);
+    String idNoRecebido = msg.substring(13, 23);
+   
+    if (estado == "V") { //Se V verifica a luminosidade
+      
+       // Verifica a luminosidade se esta de acordo com a do proprio no        
+       if( ((luminosidadeRecebida <= CLARO) && (ldrValor <= CLARO)) || ((luminosidadeRecebida >= CLARO) && (ldrValor >= CLARO)) ){  
+         
+         Serial.print("Luminosidade recebida do no receptor/emissor: ");
+         Serial.print(luminosidadeRecebida);
+         Serial.print("\nLuminosidade do no principal: ");
+         Serial.print(ldrValor);
+         Serial.println();
+         
+         // Identifica o no e envia SMS.
+         String msgRecebida = msg.substring(24);
+         String msgEnviar = String("No " + idNoRecebido + ". " + msgRecebida);
+         
+         if(DEV){
+           Serial.print("\nEnviar SMS. Mensagem Recebida: ");
+           Serial.println("No " + idNoRecebido + ". " + msgRecebida);
+         }
+         
+         sendSMS(TELEFONE, msgEnviar);
+         delay(1000);
+       }
+       else{
+         Serial.print("Nao enviar SMS. Diferenca de luminosidade. No principal: ");
+         Serial.print(luminosidadeRecebida);
+         Serial.print(". No emissor-receptor: ");
+         Serial.print(ldrValor);
+         Serial.println();
+       }
+    }else{
+      Serial.print("Nao enviar SMS. Verificador: ");
+      Serial.println(estado);
+    }
+}
+
+void changedConnectionCallback() { // Mudando de conexo
+    Serial.printf("Conexao alterada (%s)\n", mesh.subConnectionJson().c_str());
+    nodes = mesh.getNodeList();
+    Serial.printf("Quantidade de no(s) conectado(s): %d\n", nodes.size());
+    Serial.printf("Lista de conexoes:\n");
+    SimpleList<uint32_t>::iterator node = nodes.begin();
+
+    while (node != nodes.end()) {
+      Serial.printf(" %s", *node);
+      node++;
+    }
+
+    Serial.println();
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+    Serial.printf("Nova conexao com no cujo id e: %u\n", nodeId);
+}
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+    Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),offset);
+}
 
 //************************************************************************************************************************
 // Configuracao do programa:
 //************************************************************************************************************************
 void setup() {
     Serial.begin(9600); // Velocidade de comunicacao;
+    
+    // Configura o sistema de envio de SMS:
+    Serial.print("AT+CMGF=1\n;AT+CNMI=2,2,0,0,0\n;ATX4\n;AT+COLP=1\n"); 
+    Serial.println("\nSistema de envio de SMS configurado.");
+    
     pinMode(PINO_LED, OUTPUT); // Define o pino do led como saida
 
     //Mensagens de Debug (tem que ser configurado antes da inicializacao da mesh para ver mensagens de erro de inicializacao, se ocorrerem):
@@ -120,15 +205,6 @@ void readLuminosity(){ // Lendo luminosidade
    taskReadLuminosity.setInterval( random( TASK_SECOND * 1, TASK_SECOND * 5 ));
 }
 
-void sendSMS(String mensagem){ // Envia SMS para o numero cadastrado.
-    Serial.print("AT+CMGS=\"" + telefone + "\"\n");
-    Serial.print(mensagem + "\n");
-    Serial.print((char)26);
-}
-
-//************************************************************************************************************************
-// Funcoes da rede Mesh:
-//************************************************************************************************************************
 void sendMessage(){ // Enviando mensagens
     // Formato da mensagem enviada: corrente!luminosidade!hora!no
     // Ex.:  0.20!325!18:30!NodeMCU#1
@@ -138,10 +214,12 @@ void sendMessage(){ // Enviando mensagens
     String hora = String("0:00");
     String msg = String("F!" + corrente + "!" + luminosidade + "!" + hora + "!" + no + "\n\n");
 
-    Serial.print("\nEnviando status do no ");
-    Serial.print(mesh.getNodeId());
-    Serial.print(" para todos os nos da rede com a seguinte mensagem: ");
-    Serial.println(msg);
+    if(DEV){
+      Serial.print("\nEnviando status do no ");
+      Serial.print(mesh.getNodeId());
+      Serial.print(" para todos os nos da rede com a seguinte mensagem: ");
+      Serial.println(msg);
+    }
 
     // Envia para todos os nos da rede mesh.
     mesh.sendBroadcast(msg);
@@ -150,69 +228,11 @@ void sendMessage(){ // Enviando mensagens
     taskSendMessage.setInterval( random( TASK_SECOND * 1, TASK_SECOND * 5 ));
 }
 
-void receivedCallback(uint32_t from, String &msg) {
-    Serial.print("Mensagem recebida do no: ");
-    Serial.print(from + ": ");
-    Serial.println(msg);
-
-    // Desmenbrando a String recebida:
-    String estado = msg.substring(0, 1);
-    String correnteRecebida = msg.substring(2, 6);
-    String msgRaw = msg.substring(7, 10);
-    int luminosidadeRecebida = atoi(msgRaw.c_str());
-    String horaRecebida = msg.substring(11, 12);
-    String idNoRecebido = msg.substring(13, 23);
-    
-    /*
-    Serial.println(estado);
-    Serial.println(correnteRecebida);
-    Serial.println(luminosidadeRecebida);
-    Serial.println(horaRecebida);
-    Serial.println(idNoRecebido);
-    */
-   
-    if (estado == "V") { //Se V envia sms
-      
-       // Verifica a luminosidade se esta de acordo com a do proprio no        
-       if( ((luminosidadeRecebida <= CLARO) && (ldrValor <= CLARO)) || ((luminosidadeRecebida >= CLARO) && (ldrValor >= CLARO)) ){  
-         
-         Serial.print("Luminosidade recebida do no receptor/emissor: ");
-         Serial.print(luminosidadeRecebida);
-         Serial.print("\nLuminosidade do no principal: ");
-         Serial.print(ldrValor);
-         
-         // Identifica o no e envia SMS.
-         String msgRecebida = msg.substring(24);
-         // sendSMS(msgRecebida);
-         
-         Serial.print("\nEnviar SMS. Mensagem Recebida: ");
-         Serial.println(msgRecebida);
-       }
-    }else{
-      Serial.print("Nao enviar SMS. Mensagem Recebida: ");
-      Serial.println(msg);
-    }
-}
-
-void changedConnectionCallback() { // Mudando de conexo
-    Serial.printf("Conexao alterada (%s)\n", mesh.subConnectionJson().c_str());
-    nodes = mesh.getNodeList();
-    Serial.printf("Quantidade de no(s) conectado(s): %d\n", nodes.size());
-    Serial.printf("Lista de conexoes:\n");
-    SimpleList<uint32_t>::iterator node = nodes.begin();
-
-    while (node != nodes.end()) {
-      Serial.printf(" %s", *node);
-      node++;
-    }
-
-    Serial.println();
-}
-
-void newConnectionCallback(uint32_t nodeId) {
-    Serial.printf("Nova conexao com no cujo id e: %u\n", nodeId);
-}
-
-void nodeTimeAdjustedCallback(int32_t offset) {
-    Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),offset);
+void sendSMS(String numeroSMS, String mensagem){ // Envia SMS para o numero cadastrado.
+    // Configura o sistema de envio de SMS:
+    Serial.print("AT+CMGF=1\n;AT+CNMI=2,2,0,0,0\n;ATX4\n;AT+COLP=1\n"); 
+    Serial.println("\nSistema de envio de SMS configurado.");
+    Serial.print("AT+CMGS=\"" + numeroSMS + "\"\n");
+    Serial.print(mensagem + "\n");
+    Serial.print((char)26);
 }

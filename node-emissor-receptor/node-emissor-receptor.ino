@@ -17,7 +17,7 @@
 // 3. Le horario com RTC DS1302;
 // 4. Envia mensagem broadcast para os nos da rede mesh;
 // 5. Recebe mensagem broadcast dos nos da rede mesh;
-// 6. Envia SMS com SIM800L.
+// 6. Requisita o envio de SMS ao no principal.
 //************************************************************************************************************************
 
 //************************************************************************************************************************
@@ -54,7 +54,7 @@ double resistorCarga = 22; // Carga do resistor;
 int ldrValor = 0; // Valor lido do LDR;
 double Irms = 0.00; // Valor lido do leitor corrente;
 #define CLARO 700 // Cosiderado claro ate 700 de luminosidade;
-#define CORRENTE 0.25 // Media da variacao da corrente para determinar o gasto ou nao;
+#define CORRENTE 0.80 // Media da variacao da corrente para determinar o gasto ou nao;
 int estabilizador = 0; // Usado enquanto o sistema inicializa para estabilizar a corrente.
 
 // RTC DS1302:
@@ -72,7 +72,7 @@ String telefone = String("988338506"); // Telefone da empresa que faz manutencao
 void sendMessage();
 
 //************************************************************************************************************************
-// Configuracao de tasks - Parametros: (tempo em millis, intervalo de repeticao, callback)
+// Configuracao de tasks - Parametros: (tempo em millis, intervalo de repeticao, callback function)
 //************************************************************************************************************************
 Task taskSendMessage( TASK_SECOND * 1 , TASK_FOREVER, &sendMessage );
 Task taskReadAmperage( TASK_SECOND * 0.1 , TASK_FOREVER, &readAmperage );
@@ -84,6 +84,9 @@ Task taskReadTime( TASK_SECOND * 0.1 , TASK_FOREVER, &readTime );
 //************************************************************************************************************************
 #define DEV true // Ativa/desativa o modo desenvolvedor para mostrar os debugs na serial;
 
+//************************************************************************************************************************
+// Funcoes callback:
+//************************************************************************************************************************
 void receivedCallback(uint32_t from, String &msg) {
     Serial.print("Mensagem recebida do no ");
     Serial.print(from + ": ");
@@ -321,25 +324,35 @@ void readLuminosity(){ // Lendo luminosidade
 }
 
 void requestSMS(String mensagem){ // Requisita o envio de SMS para o no principal.
-    // Formato da mensagem enviada: verificador!corrente!luminosidade!hora!no
-    // Ex.:  V!0.20!325!18:30!NodeMCU#1
-    String no = String(mesh.getNodeId());
-    String corrente = String(Irms);
-    String luminosidade = String(ldrValor);
-    String hora = String(RTC.hours);
-    String msg = String("V!" + corrente + "!" + luminosidade + "!" + hora + "!" + no + "!" + mensagem + "\n\n");
-    Serial.print("\nNo ");
-    Serial.print(mesh.getNodeId());
-    Serial.print(" requisitando envio de SMS ao no principal com a mensagem: ");
-    Serial.println(msg);
-
-    // Atualiza a hora e minuto do ultimo envio:
-    ultimoEnvioHora = RTC.hours;
-    ultimoEnvioMinutos = RTC.minutes;
     
-    
-    // Envia para todos os nos da rede mesh.
-    mesh.sendBroadcast(msg);
+    if(estabilizador > 10){
+      // Formato da mensagem enviada: verificador!corrente!luminosidade!hora!no
+      // Ex.:  V!0.20!325!18:30!NodeMCU#1
+      String no = String(mesh.getNodeId());
+      String corrente = String(Irms);
+      String luminosidade = String(ldrValor);
+      String hora = String(RTC.hours);
+      // String minutos = String(RTC.minutes);
+      String msg = String("V!" + corrente + "!" + luminosidade + "!" + hora + "!" + no + "!" + mensagem + "\n\n");
+  
+      // Atualiza a hora e minuto do ultimo envio:
+      if(RTC.hours > ultimoEnvioHora){
+        ultimoEnvioHora = RTC.hours;
+        ultimoEnvioMinutos = RTC.minutes;
+        
+        Serial.print("\nNo ");
+        Serial.print(mesh.getNodeId());
+        Serial.print(" requisitando envio de SMS ao no principal com a mensagem: ");
+        Serial.println(msg);
+      
+        // Envia para todos os nos da rede mesh.
+        mesh.sendBroadcast(msg);
+       }
+    }
+    else{
+      estabilizador++;
+      delay(1000);
+    }
 }
 
 //************************************************************************************************************************
