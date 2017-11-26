@@ -7,9 +7,16 @@ Diretório 'node-emissor-receptor'; Diretório 'node-principal'; Diretório 'nod
 
 
 ```
-| iluminacao-publica/
+| node-ap/
 |
-|-- iluminacao-publica.ino
+|-- node-ap.ino
 
+| node-emissor-receptor/
+|
+|-- node-emissor-receptor.ino
+
+| node-principal/
+|
+|-- node-principal.ino
 ```
 
