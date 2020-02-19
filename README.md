@@ -1,3 +1,6 @@
+Copyright [2017] [Elias de Souza Gonçalves e Maxuell Roger Caetano]
+Licensed under the Apache License, Version 2.0
+
 SISTEMA DE INTERLIGAÇÃO E MONITORAMENTO DOS PONTOS DE ILUMINAÇÃO PÚBLICA
 ========================================================================
 

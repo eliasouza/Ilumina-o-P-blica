@@ -1,5 +1,12 @@
 /*
 *
+* Copyright [2017] [Elias de Souza Gonçalves e Maxuell Roger Caetano]
+* Licensed under the Apache License, Version 2.0
+*
+*/
+
+/*
+*
 * Computer Science Section
 * Faculdades Integradas de Caratinga
 * Caratinga, MG, Brazil
